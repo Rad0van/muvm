@@ -51,3 +51,4 @@ pub struct GuestConfiguration {
 pub const PULSE_SOCKET: u32 = 3333;
 pub const HIDPIPE_SOCKET: u32 = PULSE_SOCKET + 1;
 pub const MUVM_GUEST_SOCKET: u32 = HIDPIPE_SOCKET + 1;
+pub const PCSCD_SOCKET: u32 = MUVM_GUEST_SOCKET + 1;
