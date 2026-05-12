@@ -113,7 +113,18 @@ pub fn run_io_host(listener: UnixListener, is_tty: bool) -> Result<u8> {
     let epoll = Epoll::new(EpollCreateFlags::empty())?;
     let signalfd = SignalFd::new(&SigSet::from(Signal::SIGWINCH))?;
     epoll.add(&remote, EpollEvent::new(EpollFlags::EPOLLIN, 1))?;
-    epoll.add(stdin.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, 2))?;
+    // Stdin is not always pollable: regular files, /dev/null, and most char
+    // devices return EPERM from epoll_ctl. This happens for any caller that
+    // didn't get a pipe / pty / socket as stdin — common cases include
+    // `.desktop` launchers (stdin → /dev/null) and `cmd </some/file`.
+    // Treat non-pollable stdin as immediate-EOF and proceed without forwarding.
+    if let Err(e) = epoll.add(stdin.as_fd(), EpollEvent::new(EpollFlags::EPOLLIN, 2)) {
+        if e != Errno::EPERM {
+            return Err(e.into());
+        }
+        let eof_cmd: u16 = CMD_WRITE_STDIN; // length = 0 → EOF marker
+        remote.write_all(&eof_cmd.to_le_bytes())?;
+    }
     if is_tty {
         epoll.add(&signalfd, EpollEvent::new(EpollFlags::EPOLLIN, 3))?;
         sigprocmask(
