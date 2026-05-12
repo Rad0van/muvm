@@ -144,7 +144,7 @@ fn main() -> Result<ExitCode> {
     }
 
     let pulse_path = run_path.join("pulse");
-    std::fs::create_dir(&pulse_path)
+    std::fs::create_dir_all(&pulse_path)
         .context("Failed to create `pulse` directory in `XDG_RUNTIME_DIR`")?;
     let pulse_path = pulse_path.join("native");
     setup_socket_proxy(pulse_path, PULSE_SOCKET)?;
