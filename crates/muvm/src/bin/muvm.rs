@@ -442,6 +442,7 @@ fn main() -> Result<ExitCode> {
         cwd,
         init_commands,
         user_init_commands: options.user_init_commands,
+        publish_ports: options.publish_ports,
     };
     let mut muvm_config_file = NamedTempFile::new()
         .context("Failed to create a temporary file to store the muvm guest config")?;
