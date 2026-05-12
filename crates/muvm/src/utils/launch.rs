@@ -46,6 +46,8 @@ pub struct GuestConfiguration {
     pub cwd: PathBuf,
     pub init_commands: Vec<PathBuf>,
     pub user_init_commands: Vec<PathBuf>,
+    #[serde(default)]
+    pub publish_ports: Vec<String>,
 }
 
 pub const PULSE_SOCKET: u32 = 3333;

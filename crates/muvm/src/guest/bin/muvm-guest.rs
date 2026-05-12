@@ -12,9 +12,9 @@ use muvm::guest::bridge::x11::start_x11bridge;
 use muvm::guest::fex::setup_fex;
 use muvm::guest::hidpipe::start_hidpipe;
 use muvm::guest::mount::mount_filesystems;
-use muvm::guest::net::configure_network;
+use muvm::guest::net::{configure_network, tcp_port_pairs};
 use muvm::guest::server::server_main;
-use muvm::guest::socket::setup_socket_proxy;
+use muvm::guest::socket::{setup_loopback_tcp_proxies, setup_socket_proxy};
 use muvm::guest::user::setup_user;
 use muvm::guest::x11::setup_x11_forwarding;
 use muvm::utils::env::get_var_if_exists;
@@ -120,7 +120,13 @@ fn main() -> Result<ExitCode> {
         }
     }
 
-    configure_network()?;
+    let guest_ipv4 = configure_network()?;
+
+    if let Some(eth0_ip) = guest_ipv4 {
+        let pairs = tcp_port_pairs(&options.publish_ports);
+        setup_loopback_tcp_proxies(eth0_ip, &pairs)
+            .unwrap_or_else(|err| eprintln!("Failed to set up loopback TCP proxies: {err}"));
+    }
 
     let run_path = match setup_user(Uid::from(options.uid), Gid::from(options.gid)) {
         Ok(p) => p,

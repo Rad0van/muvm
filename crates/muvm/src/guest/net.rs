@@ -125,7 +125,7 @@ fn update_addr4(
 }
 
 /// Send DISCOVER with Rapid Commit, process ACK, configure address and route
-fn do_dhcp(rtnl: &NlRouter, if_index: i32) -> Result<()> {
+fn do_dhcp(rtnl: &NlRouter, if_index: i32) -> Result<Option<Ipv4Addr>> {
     // Temporary link-local address and route avoid the need for raw sockets
     update_route4(rtnl, if_index, Rtm::Newroute, Ipv4Addr::UNSPECIFIED)?;
     update_addr4(
@@ -235,6 +235,7 @@ fn do_dhcp(rtnl: &NlRouter, if_index: i32) -> Result<()> {
         update_route4(rtnl, if_index, Rtm::Newroute, router)?;
 
         set_mtu(rtnl, if_index, mtu.into())?;
+        Ok(Some(addr))
     } else {
         // Clean up: we're clearly too cool for IPv4
         update_route4(rtnl, if_index, Rtm::Delroute, Ipv4Addr::UNSPECIFIED)?;
@@ -245,9 +246,8 @@ fn do_dhcp(rtnl: &NlRouter, if_index: i32) -> Result<()> {
             Ipv4Addr::new(169, 254, 1, 1),
             16,
         )?;
+        Ok(None)
     }
-
-    Ok(())
 }
 
 /// Wait for SLAAC to complete or fail
@@ -290,7 +290,7 @@ fn wait_for_slaac(rtnl: &NlRouter, if_index: i32) -> Result<()> {
     Ok(())
 }
 
-pub fn configure_network() -> Result<()> {
+pub fn configure_network() -> Result<Option<Ipv4Addr>> {
     // Allow unprivileged users to use ping, as most distros do by default.
     {
         let mut file = fs::File::options()
@@ -326,9 +326,7 @@ pub fn configure_network() -> Result<()> {
     }
 
     // Configure IPv4
-    {
-        do_dhcp(&rtnl, if_index)?;
-    }
+    let guest_ipv4 = do_dhcp(&rtnl, if_index)?;
 
     // Ensure IPv6 setup is done, if available
     {
@@ -340,5 +338,70 @@ pub fn configure_network() -> Result<()> {
         set_flags(&rtnl, if_index, Iff::NOARP, Iff::empty())?;
     }
 
-    Ok(())
+    Ok(guest_ipv4)
+}
+
+/// Parse publish_port specs and return (host_port, guest_port) pairs for TCP only.
+pub fn tcp_port_pairs(publish_ports: &[String]) -> Vec<(u32, u32)> {
+    let mut pairs = Vec::new();
+    for spec in publish_ports {
+        let mut arg = spec.as_str();
+        let udp = arg.ends_with("/udp");
+        if let Some(pos) = arg.rfind('/') {
+            arg = &arg[..pos];
+        }
+        if udp {
+            continue;
+        }
+        let guest_range_start = arg.rfind(':');
+        let guest_str = &arg[guest_range_start.map(|x| x + 1).unwrap_or(0)..];
+        let guest_range = if let Some(pos) = guest_str.find('-') {
+            let Ok(lo) = guest_str[..pos].parse::<u32>() else {
+                continue;
+            };
+            let Ok(hi) = guest_str[pos + 1..].parse::<u32>() else {
+                continue;
+            };
+            (lo, hi)
+        } else {
+            let Ok(val) = guest_str.parse::<u32>() else {
+                continue;
+            };
+            (val, val)
+        };
+        let host_range = match guest_range_start {
+            None => guest_range,
+            Some(guest_range_start) => {
+                let before = &arg[..guest_range_start];
+                let ip_start = before.rfind(':');
+                let host_str = match ip_start {
+                    Some(ip_start) => &before[ip_start + 1..],
+                    None => before,
+                };
+                if host_str.is_empty() {
+                    guest_range
+                } else if let Some(pos) = host_str.find('-') {
+                    let Ok(lo) = host_str[..pos].parse::<u32>() else {
+                        continue;
+                    };
+                    let Ok(hi) = host_str[pos + 1..].parse::<u32>() else {
+                        continue;
+                    };
+                    (lo, hi)
+                } else {
+                    let Ok(val) = host_str.parse::<u32>() else {
+                        continue;
+                    };
+                    (val, val)
+                }
+            },
+        };
+        let host_count = host_range.1.saturating_sub(host_range.0);
+        let guest_count = guest_range.1.saturating_sub(guest_range.0);
+        let count = host_count.min(guest_count);
+        for i in 0..=count {
+            pairs.push((host_range.0 + i, guest_range.0 + i));
+        }
+    }
+    pairs
 }
