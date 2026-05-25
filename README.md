@@ -1,5 +1,9 @@
 # muvm - run programs from your system in a microVM
 
+> **Fork note:** this is a fork with patches for running the Slovak DITEC eID stack
+> on Asahi Linux (smartcard/pcscd bridge, IPv6 `localhost` forwarding, FEX/JVM
+> robustness fixes). See **[FORK.md](FORK.md)** for what changed and why.
+
 `muvm` allows you to run arbitrary programs from your system in a microVM. It's comprised of 2 small programs:
 
 - `muvm`: links against [libkrun](https://github.com/containers/libkrun) to create the microVM.
