@@ -22,7 +22,7 @@ use muvm::env::{find_muvm_exec, prepare_env_vars};
 use muvm::hidpipe_server::spawn_hidpipe_server;
 use muvm::launch::{launch_or_lock, LaunchResult, DYNAMIC_PORT_RANGE};
 use muvm::monitor::spawn_monitor;
-use muvm::net::{connect_to_passt, start_passt};
+use muvm::net::{connect_to_passt, host_loopback_ports, setup_host_loopback6_proxies, start_passt};
 use muvm::types::MiB;
 use muvm::utils::launch::{
     GuestConfiguration, Launch, HIDPIPE_SOCKET, MUVM_GUEST_SOCKET, PCSCD_SOCKET, PULSE_SOCKET,
@@ -278,9 +278,13 @@ fn main() -> Result<ExitCode> {
                 .context("Failed to connect to `passt`")?
                 .into()
         } else {
-            start_passt(&options.publish_ports, &options.passt_args)
-                .context("Failed to start `passt`")?
-                .into()
+            let passt_fd = start_passt(&options.publish_ports, &options.passt_args)
+                .context("Failed to start `passt`")?;
+            // passt binds published ports IPv4-only; forward the IPv6 loopback so
+            // `localhost:<port>` works over both families (browsers prefer ::1).
+            setup_host_loopback6_proxies(&host_loopback_ports(&options.publish_ports)?)
+                .context("Failed to set up IPv6 loopback proxies")?;
+            passt_fd.into()
         };
         // SAFETY: `passt_fd` is an `OwnedFd` and consumed to prevent closing on drop.
         // See https://doc.rust-lang.org/std/io/index.html#io-safety

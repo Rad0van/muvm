@@ -1,11 +1,16 @@
+use std::collections::HashMap;
+use std::env;
 use std::os::fd::{AsRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 use log::debug;
 use rustix::io::dup;
+
+use crate::utils::env::find_in_path;
+use crate::utils::stdio::make_stdout_stderr;
 
 struct PublishSpec<'a> {
     udp: bool,
@@ -59,13 +64,17 @@ impl PublishSpec<'_> {
         })
     }
     fn to_args(&self) -> [String; 2] {
-        let optslash = if self.ip.is_empty() { "" } else { "/" };
+        // Bind to a specific IPv4 address (default 0.0.0.0) so passt creates an
+        // IPv4-only listener instead of a dual-stack one. That frees the IPv6
+        // loopback (::1) for muvm's own host-side proxy (browsers resolve
+        // `localhost` to ::1 first, which passt accepts but never forwards).
+        // See `setup_host_loopback6_proxies`.
+        let ip = if self.ip.is_empty() { "0.0.0.0" } else { self.ip };
         [
             if self.udp { "-u" } else { "-t" }.to_owned(),
             format!(
-                "{}{}{}-{}:{}-{}",
-                self.ip,
-                optslash,
+                "{}/{}-{}:{}-{}",
+                ip,
                 self.host_range.0,
                 self.host_range.1,
                 self.guest_range.0,
@@ -121,4 +130,50 @@ pub fn start_passt(publish_ports: &[String], passt_args: &[String]) -> Result<Un
     }
 
     Ok(parent_socket)
+}
+
+/// Host TCP ports published *without* an explicit bind address. passt binds
+/// these IPv4-only (see `PublishSpec::to_args`), so they each get an IPv6
+/// loopback proxy below.
+pub fn host_loopback_ports(publish_ports: &[String]) -> Result<Vec<u32>> {
+    let mut ports = Vec::new();
+    for spec in publish_ports {
+        let spec = PublishSpec::parse(spec)?;
+        if spec.udp || !spec.ip.is_empty() {
+            continue;
+        }
+        for port in spec.host_range.0..=spec.host_range.1 {
+            ports.push(port);
+        }
+    }
+    Ok(ports)
+}
+
+/// For each host port, start a `socat` proxy listening on `[::1]:port` and
+/// forwarding to `127.0.0.1:port` (where passt listens on IPv4). Without this,
+/// connections to `localhost` that resolve to the IPv6 loopback first (browsers
+/// do) never reach the guest, since passt is bound IPv4-only and its dual-stack
+/// listener wouldn't forward IPv6 loopback anyway.
+pub fn setup_host_loopback6_proxies(host_ports: &[u32]) -> Result<()> {
+    if host_ports.is_empty() {
+        return Ok(());
+    }
+    let socat_path = find_in_path("socat").context("Failed to check existence of `socat`")?;
+    let Some(socat_path) = socat_path else {
+        eprintln!("socat not found; IPv6 loopback proxies for published ports will not be set up");
+        return Ok(());
+    };
+    let envs: HashMap<String, String> = env::vars().collect();
+    for &port in host_ports {
+        let (stdout, stderr) = make_stdout_stderr(&socat_path, &envs)?;
+        Command::new(&socat_path)
+            .arg(format!("TCP6-LISTEN:{port},bind=[::1],fork,reuseaddr"))
+            .arg(format!("TCP4:127.0.0.1:{port}"))
+            .stdin(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
+            .spawn()
+            .with_context(|| format!("Failed to start IPv6 loopback proxy for port {port}"))?;
+    }
+    Ok(())
 }
