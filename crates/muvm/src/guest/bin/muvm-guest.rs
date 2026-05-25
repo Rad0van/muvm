@@ -64,6 +64,19 @@ fn main() -> Result<ExitCode> {
         setrlimit(Resource::Nofile, rlim).context("Failed to raise `RLIMIT_NOFILE`")?;
     }
 
+    {
+        // FEX-emulated x86_64 processes reserve tens of GB of VmData. With the
+        // guest's default heuristic overcommit (vm.overcommit_memory=0) and a
+        // small CommitLimit (no swap, 50% of --mem), fork()/posix_spawn from
+        // such a process is rejected with ENOMEM even when physical memory is
+        // free. This breaks e.g. eID_Client spawning its VirtualKeyboard helper
+        // for contactless BOK/PACE entry. Switch to always-overcommit so these
+        // forks succeed.
+        if let Err(err) = fs::write("/proc/sys/vm/overcommit_memory", b"1\n") {
+            eprintln!("Failed to set vm.overcommit_memory=1: {err}");
+        }
+    }
+
     if let Err(err) = mount_filesystems(options.merged_rootfs) {
         return Err(err).context("Failed to mount filesystems, bailing out");
     }
