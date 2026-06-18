@@ -18,7 +18,7 @@ use muvm::guest::socket::setup_socket_proxy;
 use muvm::guest::user::setup_user;
 use muvm::guest::x11::setup_x11_forwarding;
 use muvm::utils::env::get_var_if_exists;
-use muvm::utils::launch::{Emulator, GuestConfiguration, PULSE_SOCKET};
+use muvm::utils::launch::{Emulator, GuestConfiguration, PCSCD_SOCKET, PULSE_SOCKET};
 use nix::unistd::{Gid, Uid};
 use rustix::process::{getrlimit, setrlimit, Resource};
 
@@ -142,6 +142,13 @@ fn main() -> Result<ExitCode> {
         .context("Failed to create `pulse` directory in `XDG_RUNTIME_DIR`")?;
     let pulse_path = pulse_path.join("native");
     setup_socket_proxy(pulse_path, PULSE_SOCKET)?;
+
+    let pcscd_dir = run_path.join("pcscd");
+    std::fs::create_dir_all(&pcscd_dir)
+        .context("Failed to create `pcscd` directory in `XDG_RUNTIME_DIR`")?;
+    let pcscd_socket_path = pcscd_dir.join("pcscd.comm");
+    setup_socket_proxy(&pcscd_socket_path, PCSCD_SOCKET)?;
+    env::set_var("PCSCLITE_CSOCK_NAME", &pcscd_socket_path);
 
     if let Some(host_display) = options.host_display {
         setup_x11_forwarding(run_path, &host_display)?;

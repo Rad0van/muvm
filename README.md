@@ -66,6 +66,20 @@ If [sommelier](https://chromium.googlesource.com/chromiumos/platform2/+/master/v
 
 GPU acceleration is also enabled on systems supporting [DRM native context](https://indico.freedesktop.org/event/2/contributions/53/attachments/76/121/XDC2022_%20virtgpu%20drm%20native%20context.pdf) (freedreno, amdgpu, asahi).
 
+## Smart card forwarding (pcscd)
+
+`muvm` can forward the host `pcscd` UNIX socket into the guest so PC/SC applications inside the microVM can talk to host smart card readers.
+
+On the host side, `muvm` looks for the socket in this order:
+
+1. `PCSCLITE_CSOCK_NAME` (if set)
+2. `/run/pcscd/pcscd.comm`
+3. `/var/run/pcscd/pcscd.comm`
+
+If no host socket is found, startup continues and smart card forwarding is simply disabled.
+
+Inside the guest, `muvm-guest` exposes the forwarded socket under `XDG_RUNTIME_DIR/pcscd/pcscd.comm` and sets `PCSCLITE_CSOCK_NAME` accordingly for launched applications.
+
 ## Running x86/x86_64 on aarch64
 
 If [FEX-Emu](https://fex-emu.com/) is installed in your system, `muvm` will configure `binfmt_misc` inside the microVM so x86/x86_64 programs can be run transparently on it.

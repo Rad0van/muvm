@@ -25,7 +25,7 @@ use muvm::monitor::spawn_monitor;
 use muvm::net::{connect_to_passt, start_passt};
 use muvm::types::MiB;
 use muvm::utils::launch::{
-    GuestConfiguration, Launch, HIDPIPE_SOCKET, MUVM_GUEST_SOCKET, PULSE_SOCKET,
+    GuestConfiguration, Launch, HIDPIPE_SOCKET, MUVM_GUEST_SOCKET, PCSCD_SOCKET, PULSE_SOCKET,
 };
 use nix::sys::sysinfo::sysinfo;
 use nix::unistd::User;
@@ -358,6 +358,35 @@ fn main() -> Result<ExitCode> {
             let err = Errno::from_raw_os_error(-err);
             return Err(err).context("Failed to configure vsock for guest server socket");
         }
+    }
+
+    let pcscd_socket_path = env::var("PCSCLITE_CSOCK_NAME")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(Into::into)
+        .or_else(|| {
+            ["/run/pcscd/pcscd.comm", "/var/run/pcscd/pcscd.comm"]
+                .iter()
+                .map(Path::new)
+                .find(|path| path.exists())
+                .map(|path| path.to_path_buf())
+        });
+    if let Some(pcscd_socket_path) = pcscd_socket_path {
+        debug!("Forwarding host pcscd socket: {}", pcscd_socket_path.display());
+        let pcscd_socket_path = CString::new(
+            pcscd_socket_path
+                .to_str()
+                .expect("pcscd_socket_path should not contain invalid UTF-8"),
+        )
+        .context("Failed to process pcscd socket path as it contains NUL character")?;
+        // SAFETY: `pcscd_socket_path` is a pointer to a `CString` with long enough lifetime.
+        let err = unsafe { krun_add_vsock_port(ctx_id, PCSCD_SOCKET, pcscd_socket_path.as_ptr()) };
+        if err < 0 {
+            let err = Errno::from_raw_os_error(-err);
+            return Err(err).context("Failed to configure vsock for pcscd socket");
+        }
+    } else {
+        debug!("No host pcscd socket found; continuing without pcscd forwarding");
     }
 
     let uid = getuid().as_raw();
