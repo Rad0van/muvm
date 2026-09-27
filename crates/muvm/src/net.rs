@@ -132,14 +132,16 @@ pub fn start_passt(publish_ports: &[String], passt_args: &[String]) -> Result<Un
     Ok(parent_socket)
 }
 
-/// Host TCP ports published *without* an explicit bind address. passt binds
-/// these IPv4-only (see `PublishSpec::to_args`), so they each get an IPv6
-/// loopback proxy below.
+/// Host TCP ports that passt listens on at 127.0.0.1: those published without
+/// an explicit bind address (passt binds them IPv4-only on 0.0.0.0, see
+/// `PublishSpec::to_args`) and those bound to 127.0.0.1 itself. Each gets an
+/// IPv6 loopback proxy below. Ports bound to any other address are skipped:
+/// the proxy forwards to 127.0.0.1, where nothing would be listening.
 pub fn host_loopback_ports(publish_ports: &[String]) -> Result<Vec<u32>> {
     let mut ports = Vec::new();
     for spec in publish_ports {
         let spec = PublishSpec::parse(spec)?;
-        if spec.udp || !spec.ip.is_empty() {
+        if spec.udp || !(spec.ip.is_empty() || spec.ip == "127.0.0.1") {
             continue;
         }
         for port in spec.host_range.0..=spec.host_range.1 {
@@ -176,4 +178,27 @@ pub fn setup_host_loopback6_proxies(host_ports: &[u32]) -> Result<()> {
             .with_context(|| format!("Failed to start IPv6 loopback proxy for port {port}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loopback_ports_cover_unbound_and_127_0_0_1_only() {
+        let specs: Vec<String> = [
+            "15480:15480",
+            "127.0.0.1:8080:80",
+            "192.168.1.5:9000:9000",
+            "5353/udp",
+            "127.0.0.1:7000-7001:7000-7001",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            host_loopback_ports(&specs).unwrap(),
+            vec![15480, 8080, 7000, 7001]
+        );
+    }
 }
